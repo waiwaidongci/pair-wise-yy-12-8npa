@@ -1,126 +1,111 @@
+import { useMemo, useState } from "react";
 import "./styles.css";
+import type { HoofPos } from "./domain/types";
+import { checkConsistency, SHOE_STATE_LABEL } from "./domain/rules";
+import { daysUntil, useArchive } from "./state/useArchive";
+import { HorsesPanel } from "./ui/HorsesPanel";
+import { FittingPanel, type FitSelection } from "./ui/FittingPanel";
+import { ShoesPanel } from "./ui/ShoesPanel";
+import { RecordsPanel } from "./ui/RecordsPanel";
+import { NoticeBar } from "./ui/primitives";
 
-const project = {
-  "sourceNo": 6,
-  "id": "hxyfront-62011",
-  "port": 62011,
-  "title": "马术蹄铁修整档案",
-  "domain": "马术蹄铁",
-  "prompt": "做一个面向马术俱乐部蹄铁师的修蹄记录前端项目，可以记录马匹编号、步态问题、蹄形评估、蹄铁类型、钉位、修蹄日期、下次复查日期和照片备注。页面需要有马匹列表、复查提醒、左右前后蹄对比记录、异常步态标记和蹄铁更换历史。",
-  "palette": [
-    "#78350f",
-    "#166534",
-    "#2563eb"
-  ],
-  "metrics": [
-    "待复查",
-    "异常步态",
-    "更换蹄铁",
-    "马匹档案"
-  ],
-  "filters": [
-    "前蹄",
-    "后蹄",
-    "运动马",
-    "休养马"
-  ],
-  "fields": [
-    "马匹编号",
-    "步态问题",
-    "蹄形评估",
-    "蹄铁类型",
-    "钉位",
-    "下次复查"
-  ],
-  "records": [
-    [
-      "HORSE-18",
-      "右前蹄外侧磨耗",
-      "铝蹄铁",
-      "14天后复查"
-    ],
-    [
-      "HORSE-27",
-      "后蹄裂纹",
-      "加护蹄垫",
-      "拍照归档"
-    ],
-    [
-      "HORSE-31",
-      "步态轻微不稳",
-      "需教练复核",
-      "已标记"
-    ]
-  ]
-};
+const TABS = [
+  { key: "horses", label: "马匹档案" },
+  { key: "fitting", label: "装蹄排他" },
+  { key: "shoes", label: "蹄铁库房/翻新" },
+  { key: "records", label: "复查与留档" },
+] as const;
+
+type TabKey = (typeof TABS)[number]["key"];
 
 function App() {
+  const { state, notice, send, reseed, clearNotice } = useArchive();
+  const [tab, setTab] = useState<TabKey>("horses");
+  const [selection, setSelection] = useState<FitSelection | null>(null);
+
+  const metrics = useMemo(() => {
+    const open = state.fittings.filter((f) => f.status !== "CLOSED");
+    return [
+      {
+        label: "待复查（5天内含逾期）",
+        value: open.filter((f) => f.status === "ACTIVE" && daysUntil(f.nextRecheck) <= 5).length,
+      },
+      { label: "异常步态马匹", value: state.horses.filter((h) => h.gaitIssue).length },
+      { label: "待拆蹄铁（结论失效）", value: state.shoes.filter((s) => s.state === "PENDING_REMOVAL").length },
+      { label: "在装蹄铁", value: state.shoes.filter((s) => s.state === "IN_USE").length },
+      { label: "翻新待匹配", value: state.shoes.filter((s) => s.state === "PENDING_MATCH").length },
+      { label: "报废归档", value: state.shoes.filter((s) => s.state === "SCRAPPED").length },
+    ];
+  }, [state]);
+
+  const issues = useMemo(() => checkConsistency(state), [state]);
+
+  const goFit = (horseId: string, hoof: HoofPos) => {
+    setSelection({ horseId, hoof });
+    setTab("fitting");
+  };
+
   return (
     <main className="app">
       <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
+        <p>hxyfront-62011 · 源提示词 6 · Port 62011 · 领域判断 / 存储 / 界面三层分离</p>
+        <h1>蹄铁翻新复用与装蹄排他闭环</h1>
+        <span>
+          同一片蹄铁未拆下前不得装给第二匹马；翻新登记磨耗量、锻修温度与钉孔状态，超限或扩孔即报废归档；
+          翻新件蹄形与规格双匹配方可复用；同一蹄位只留一条有效记录，并发装蹄沿用首次；复查不合格蹄铁停在待拆、原结论失效留档；
+          刷新后排他占用与蹄铁履历保持一致。
+        </span>
       </section>
 
       <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[28, 6, 14, 91][index] ?? 10}</strong>
+        {metrics.map((m) => (
+          <article key={m.label}>
+            <small>{m.label}</small>
+            <strong>{m.value}</strong>
           </article>
         ))}
       </section>
 
-      <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}分类</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
+      <NoticeBar notice={notice} onClose={clearNotice} />
 
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
+      <nav className="tabs">
+        {TABS.map((t) => (
+          <button key={t.key} className={tab === t.key ? "tab active" : "tab"} onClick={() => setTab(t.key)}>
+            {t.label}
+          </button>
+        ))}
+        <button className="tab reset" onClick={() => {
+          if (window.confirm("重置为演示档案？当前本地改动会被覆盖。")) reseed();
+        }}>
+          重置演示数据
+        </button>
+      </nav>
 
-      <section className="panel">
+      {tab === "horses" ? <HorsesPanel state={state} send={send} goFit={goFit} /> : null}
+      {tab === "fitting" ? <FittingPanel state={state} send={send} selection={selection} /> : null}
+      {tab === "shoes" ? <ShoesPanel state={state} send={send} /> : null}
+      {tab === "records" ? <RecordsPanel state={state} send={send} /> : null}
+
+      <footer className="panel consistency">
         <div className="heading">
           <div>
-            <p>近期记录</p>
-            <h2>工作台摘要</h2>
+            <p>刷新后一致性</p>
+            <h2>排他占用 × 蹄铁履历体检</h2>
           </div>
-          <button>导出CSV</button>
         </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
+        <ul>
+          {issues.map((issue, i) => (
+            <li key={i} className={issue.level === "ok" ? "ok" : "error"}>
+              {issue.level === "ok" ? "✓ " : "✗ "}
+              {issue.message}
+            </li>
           ))}
-        </div>
-      </section>
+        </ul>
+        <p className="muted small">
+          状态来源：localStorage 仓储（farrier-archive-v1）；每次操作后以有效装蹄记录重建占用。蹄铁状态：
+          {Object.values(SHOE_STATE_LABEL).join(" / ")}。
+        </p>
+      </footer>
     </main>
   );
 }
